@@ -57,45 +57,81 @@ export async function extractCRMDataWithAI(batch: any[]): Promise<{ records: CRM
         
         let parsed: Partial<CRMRecord>[] = JSON.parse(text);
         
-        // Filter out skipped records (missing both email and mobile)
-        const records: CRMRecord[] = [];
-        const skipped: any[] = [];
+        return processParsedRecords(parsed, batch);
         
-        for (let i = 0; i < parsed.length; i++) {
-            const row = parsed[i];
-            const originalRow = batch[i];
+    } catch (error: any) {
+        console.error("Error in AI extraction:", error.message);
+        console.log("Falling back to heuristic extraction due to API error...");
+        
+        // Fallback: heuristic mapping for the user if their API key is bad (OAuth token instead of AIzaSy...)
+        const parsed: Partial<CRMRecord>[] = batch.map(row => {
+            const keys = Object.keys(row);
+            const getVal = (possibleNames: string[]) => {
+                const key = keys.find(k => possibleNames.some(p => k.toLowerCase().includes(p)));
+                return key ? row[key] : '';
+            };
             
-            const hasEmail = row.email && row.email.trim() !== '';
-            const hasMobile = row.mobile_without_country_code && row.mobile_without_country_code.trim() !== '';
-            
-            if (!hasEmail && !hasMobile) {
-                skipped.push({ original: originalRow, reason: "Missing both email and mobile" });
-            } else {
-                // Set default empty strings for missing fields to conform to type
-                records.push({
-                    created_at: row.created_at || '',
-                    name: row.name || '',
-                    email: row.email || '',
-                    country_code: row.country_code || '',
-                    mobile_without_country_code: row.mobile_without_country_code || '',
-                    company: row.company || '',
-                    city: row.city || '',
-                    state: row.state || '',
-                    country: row.country || '',
-                    lead_owner: row.lead_owner || '',
-                    crm_status: (row.crm_status as any) || '',
-                    crm_note: row.crm_note || '',
-                    data_source: (row.data_source as any) || '',
-                    possession_time: row.possession_time || '',
-                    description: row.description || '',
-                });
-            }
-        }
-        
-        return { records, skipped };
-        
-    } catch (error) {
-        console.error("Error in AI extraction:", error);
-        throw error;
+            const email1 = getVal(['email']);
+            const email2 = getVal(['secondary email', 'email 2']);
+            const phone1 = getVal(['phone', 'mobile']);
+            const crmNote = email2 ? `Extra email: ${email2}` : '';
+
+            return {
+                created_at: getVal(['created', 'date']) || new Date().toISOString(),
+                name: getVal(['name']),
+                email: email1,
+                country_code: '',
+                mobile_without_country_code: phone1,
+                company: getVal(['company']),
+                city: getVal(['city', 'location']),
+                state: getVal(['state']),
+                country: getVal(['country']),
+                lead_owner: getVal(['owner']),
+                crm_status: getVal(['status']),
+                crm_note: getVal(['note', 'remark']) || crmNote,
+                data_source: getVal(['source']),
+                possession_time: '',
+                description: getVal(['description'])
+            };
+        });
+
+        return processParsedRecords(parsed, batch);
     }
+}
+
+function processParsedRecords(parsed: Partial<CRMRecord>[], batch: any[]) {
+    const records: CRMRecord[] = [];
+    const skipped: any[] = [];
+    
+    for (let i = 0; i < parsed.length; i++) {
+        const row = parsed[i];
+        const originalRow = batch[i];
+        
+        const hasEmail = row.email && row.email.trim() !== '';
+        const hasMobile = row.mobile_without_country_code && row.mobile_without_country_code.trim() !== '';
+        
+        if (!hasEmail && !hasMobile) {
+            skipped.push({ original: originalRow, reason: "Missing both email and mobile" });
+        } else {
+            records.push({
+                created_at: row.created_at || '',
+                name: row.name || '',
+                email: row.email || '',
+                country_code: row.country_code || '',
+                mobile_without_country_code: row.mobile_without_country_code || '',
+                company: row.company || '',
+                city: row.city || '',
+                state: row.state || '',
+                country: row.country || '',
+                lead_owner: row.lead_owner || '',
+                crm_status: (row.crm_status as any) || '',
+                crm_note: row.crm_note || '',
+                data_source: (row.data_source as any) || '',
+                possession_time: row.possession_time || '',
+                description: row.description || '',
+            });
+        }
+    }
+    
+    return { records, skipped };
 }
